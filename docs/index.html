@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Alien Head</title>
+<style>
+*{box-sizing:border-box}body{margin:0;overflow:hidden;background:#0b1016;color:#e8eef2;font:14px system-ui,sans-serif}canvas#scene{display:block;width:100vw;height:100dvh}
+#cam{position:fixed;top:12px;right:12px;width:160px;border-radius:10px;border:1px solid #ffffff30;background:#000;z-index:3}body.mirror #cam{transform:scaleX(-1)}
+#hud{position:fixed;left:12px;top:12px;font:12px/1.6 ui-monospace,monospace;color:#9fe8c4;text-shadow:0 0 4px #000;z-index:3;white-space:pre-line}
+#panel{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);width:min(560px,calc(100% - 24px));padding:14px 16px;border-radius:14px;background:#101820ee;border:1px solid #ffffff18;z-index:3}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}.row:first-child{margin-top:0}
+button{font:inherit;border:1px solid #ffffff22;border-radius:9px;padding:9px 13px;color:#eaf4ef;background:#25323c;cursor:pointer}button.primary{background:#8fe3b4;color:#10261a;border:0}button:disabled{opacity:.5}
+label{display:flex;align-items:center;gap:6px;font-size:12px;color:#b9c6cc}input[type=range]{width:90px;accent-color:#8fe3b4}
+#status{font-size:13px;color:#d7e3e8}#error{color:#ffb3a0;font-size:12px;white-space:pre-wrap}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/"}}</script>
+</head>
+<body class="mirror">
+<canvas id="scene"></canvas>
+<video id="cam" autoplay playsinline muted></video>
+<div id="hud">alien head · loading model…</div>
+<div id="panel">
+  <div class="row"><button class="primary" id="start">Start camera</button><button id="phoneCam" title="This PC shows a code and a QR; the phone streams its camera here">Phone as camera</button><button id="center">Center</button>
+    <label><input id="mirror" type="checkbox" checked>Mirror</label></div>
+  <div class="row"><label>Turn gain <input id="turnGain" type="range" min="0.5" max="2.5" step="0.1" value="1.2"><output id="turnGainV">1.2×</output></label>
+    <label>Move gain <input id="moveGain" type="range" min="0" max="2" step="0.1" value="1"><output id="moveGainV">1.0×</output></label>
+    <label>Neck share <input id="neckShare" type="range" min="0" max="0.8" step="0.05" value="0.35"><output id="neckShareV">35%</output></label></div>
+  <div class="row"><span id="status">Start the camera, look at it, press Center.</span></div><div id="error"></div>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { phoneCamera } from './camlink.mjs';
+const $ = id => document.getElementById(id), Q = new URLSearchParams(location.search), CAM = Q.has('cam');
+const status = t => $('status').textContent = t;
+
+// --- scene ------------------------------------------------------------------------------------------------
+const renderer = new THREE.WebGLRenderer({ canvas: $('scene'), antialias: true }); renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+const scene = new THREE.Scene(); scene.background = new THREE.Color('#0b1016');
+const camera = new THREE.PerspectiveCamera(38, 1, .05, 50);
+scene.add(new THREE.HemisphereLight(0xdfe9ff, 0x2a2018, 1.1));
+const key = new THREE.DirectionalLight(0xfff1dc, 2.2); key.position.set(1.5, 2.5, 3); scene.add(key);
+const rim = new THREE.DirectionalLight(0x7fb8ff, 1.2); rim.position.set(-2, 1, -2); scene.add(rim);
+function resize() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); } addEventListener('resize', resize); resize();
+
+// --- the bust: root -> neck -> head -> eyes; rest world rotations are what the tracking rotates from ----------
+const rig = { root: null, neck: null, head: null, eyes: [] }, rest = new Map(), model = new THREE.Group(); scene.add(model);
+const _q = new THREE.Quaternion(), _p = new THREE.Quaternion(), _e = new THREE.Euler(), _v = new THREE.Vector3();
+let bustHeight = 2;
+new GLTFLoader().load('alien.glb', g => {
+  g.scene.traverse(o => { if (o.isBone) { const n = o.name.toLowerCase(); if (n.includes('root')) rig.root = o; else if (n.includes('neck')) rig.neck = o; else if (n.includes('head')) rig.head = o; else if (n.includes('eye')) rig.eyes.push(o); } if (o.isMesh) o.frustumCulled = false; });
+  g.scene.updateMatrixWorld(true);
+  for (const b of [rig.root, rig.neck, rig.head, ...rig.eyes]) if (b) rest.set(b, b.getWorldQuaternion(new THREE.Quaternion()));
+  const box = new THREE.Box3().setFromObject(g.scene), c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3()); bustHeight = s.y;
+  g.scene.position.set(-c.x, -c.y, -c.z); model.add(g.scene);
+  camera.position.set(0, s.y * 0.1, s.y * 2.05); camera.lookAt(0, -s.y * 0.02, 0);
+  $('hud').textContent = 'alien head · model ready · ' + (rig.head ? 'head bone found' : 'NO head bone') + (rig.root ? ' · shoulders on root' : '');
+}, undefined, e => $('error').textContent = 'model failed: ' + e.message);
+function setWorldRot(bone, qWorld) { bone.parent.updateWorldMatrix(true, false); bone.parent.getWorldQuaternion(_p); bone.quaternion.copy(_p.invert().multiply(qWorld)); }
+const scaled = (q, k, out) => { _e.setFromQuaternion(q, 'YXZ'); _e.x *= k; _e.y *= k; _e.z *= k; return out.setFromEuler(_e); };
+
+// --- tracking -> pose ---------------------------------------------------------------------------------------
+const view = { mirror: true, turn: 1.2, move: 1, neck: .35 };
+const track = { faceQ: new THREE.Quaternion(), faceT: new THREE.Vector3(), neutralQ: null, neutralT: new THREE.Vector3(), haveFace: false, gaze: [0, 0], neutralGaze: [0, 0],
+  shoulder: { roll: 0, yaw: 0 }, neutralS: null, haveShoulders: false, ms: 0, seen: 0, yawDeg: 0, pitchDeg: 0, rollDeg: 0 };
+const M = new THREE.Matrix4(), rawQ = new THREE.Quaternion(), rawT = new THREE.Vector3(), relQ = new THREE.Quaternion(), smoothQ = new THREE.Quaternion(), tmpQ = new THREE.Quaternion(), smoothT = new THREE.Vector3();
+function onResult(r) {
+  if (r.task === 'face') { track.ms = r.ms; track.seen = performance.now(); }
+  if (r.task === 'face') if (r.face) {
+    M.fromArray(r.face.matrix); M.decompose(rawT, rawQ, _v);
+    if (!track.neutralQ) center();
+    track.faceQ.copy(rawQ); track.faceT.copy(rawT); track.haveFace = true;
+    const b = r.face.blend || {};
+    track.gaze = [((b.eyeLookInLeft || 0) - (b.eyeLookOutLeft || 0) + (b.eyeLookOutRight || 0) - (b.eyeLookInRight || 0)) / 2,   // > 0: the person looks to their right
+                  ((b.eyeLookUpLeft || 0) + (b.eyeLookUpRight || 0) - (b.eyeLookDownLeft || 0) - (b.eyeLookDownRight || 0)) / 2];
+  } else track.haveFace = false;
+  if (r.task === 'pose') if (r.pose) {
+    const [l, rr] = r.pose.img, [wl, wr] = r.pose.world;
+    if (l[2] > .5 && rr[2] > .5) {
+      const roll = Math.atan2(rr[1] - l[1], rr[0] - l[0]) - Math.PI;   // shoulder line in the picture (y down); level = 0
+      const yaw = Math.atan2(wr[2] - wl[2], wl[0] - wr[0]);           // one shoulder nearer the camera than the other
+      track.shoulder = { roll: Math.atan2(Math.sin(roll), Math.cos(roll)), yaw }; if (!track.neutralS) track.neutralS = { ...track.shoulder }; track.haveShoulders = true;
+    }
+  }
+}
+function center() { track.neutralQ = rawQ.clone(); track.neutralT.copy(rawT); track.neutralGaze = [...track.gaze]; track.neutralS = track.haveShoulders ? { ...track.shoulder } : null; status('Centered · move your head and shoulders'); }
+function applyPose(dt) {
+  if (!rig.head) return;
+  const fresh = performance.now() - track.seen < 600, k = 1 - Math.exp(-dt / .06);
+  if (fresh && track.haveFace && track.neutralQ) {
+    relQ.copy(track.neutralQ).invert().premultiply(track.faceQ);   // rotation since Center, in camera space
+    _e.setFromQuaternion(relQ, 'YXZ'); if (view.mirror) { _e.y = -_e.y; _e.z = -_e.z; } _e.x *= view.turn; _e.y *= view.turn; _e.z *= view.turn;
+    track.yawDeg = _e.y * 180 / Math.PI; track.pitchDeg = _e.x * 180 / Math.PI; track.rollDeg = _e.z * 180 / Math.PI;
+    smoothQ.slerp(tmpQ.setFromEuler(_e), k);
+    _v.copy(track.faceT).sub(track.neutralT).multiplyScalar(view.move * 0.012 * bustHeight); if (view.mirror) _v.x = -_v.x;   // matrix translation is in cm
+    smoothT.lerp(_v, k);
+  } else { smoothQ.slerp(_q.identity(), k * .5); smoothT.lerp(_v.set(0, 0, 0), k * .5); }
+  // shoulders: roll and a little yaw on the root (the whole bust), relative to the centred pose
+  let sr = 0, sy = 0;
+  if (fresh && track.haveShoulders && track.neutralS) { sr = track.shoulder.roll - track.neutralS.roll; sy = (track.shoulder.yaw - track.neutralS.yaw) * .7; if (view.mirror) { sr = -sr; sy = -sy; } }
+  _e.set(0, sy, sr, 'YXZ'); tmpQ.setFromEuler(_e);
+  if (rig.root) setWorldRot(rig.root, _q.copy(tmpQ).multiply(rest.get(rig.root)));   // pose runs every other frame and shoulders are slow: no extra smoothing
+  model.position.copy(smoothT);
+  if (rig.neck) setWorldRot(rig.neck, scaled(smoothQ, view.neck, _q).multiply(rest.get(rig.neck)));
+  setWorldRot(rig.head, _q.copy(smoothQ).multiply(rest.get(rig.head)));
+  const cl = x => Math.max(-1, Math.min(1, x)), gx = (view.mirror ? -1 : 1) * cl(track.gaze[0] - track.neutralGaze[0]) * 25 * Math.PI / 180, gy = -cl(track.gaze[1] - track.neutralGaze[1]) * 15 * Math.PI / 180;
+  for (const eye of rig.eyes) { _e.set(gy, gx, 0, 'YXZ'); setWorldRot(eye, _q.copy(smoothQ).multiply(tmpQ.setFromEuler(_e)).multiply(rest.get(eye))); }
+}
+
+// --- camera + worker --------------------------------------------------------------------------------------
+let workers = [], stream = null, running = false, busy = [false, false], lastVideo = -1, frameN = 0;
+const v = $('cam');
+const takeCam = s => { stream = s; v.srcObject = s; v.play().catch(() => {}); };
+async function start() {
+  if (running) { stop(); return; }
+  $('start').disabled = true; $('error').textContent = ''; status(CAM ? 'Waiting for the phone camera…' : 'Starting camera…');
+  try {
+    stream = CAM ? (stream?.active ? stream : await phoneCamera(status, takeCam)) : await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } } });
+    takeCam(stream); status('Loading face + pose tracking…');
+    workers = ['face', 'pose'].map(task => new Worker(new URL('./tracker.mjs?task=' + task, import.meta.url), { type: 'module' }));
+    await Promise.all(workers.map(w => new Promise((res, rej) => { const t = setTimeout(() => rej(Error('tracker loading timed out')), 60000); w.onmessage = ({ data }) => { if (data.type === 'ready') { clearTimeout(t); res(); } else if (data.type === 'error') { clearTimeout(t); rej(Error(data.message)); } }; w.onerror = e => { clearTimeout(t); rej(Error(e.message)); }; w.postMessage({ type: 'init' }); })));
+    workers.forEach((w, i) => w.onmessage = ({ data }) => { busy[i] = false; if (data.type === 'error') { $('error').textContent = data.task + ': ' + data.message; return; } if (data.type === 'result') onResult(data); });
+    running = true; $('start').textContent = 'Stop camera'; status('Look at the camera and press Center');
+  } catch (e) { stop(); $('error').textContent = e.name === 'NotAllowedError' ? 'Camera access was declined.' : e.message; }
+  finally { $('start').disabled = false; }
+}
+function stop() { running = false; busy = [false, false]; workers.forEach(w => w.terminate()); workers = []; if (!CAM) { stream?.getTracks().forEach(t => t.stop()); stream = null; } v.srcObject = null; $('start').textContent = CAM ? 'Connect phone camera' : 'Start camera'; track.haveFace = track.haveShoulders = false; }
+let last = 0;
+function frame(now) {
+  requestAnimationFrame(frame); const dt = last ? Math.min(.1, (now - last) / 1000) : 1 / 60; last = now;
+  if (running && v.readyState >= 2 && v.currentTime !== lastVideo) {
+    lastVideo = v.currentTime; frameN++; const t = Math.round(now);
+    workers.forEach((w, i) => {   // face every frame, shoulders every other frame (the heavier model, and they move slowly)
+      if (busy[i] || (i === 1 && frameN % 2)) return; busy[i] = true;
+      createImageBitmap(v, { resizeWidth: 480, resizeHeight: Math.round(480 * v.videoHeight / v.videoWidth), resizeQuality: 'low' }).then(bm => { if (workers[i] !== w) { bm.close(); return; } w.postMessage({ type: 'frame', bitmap: bm, time: t + i }, [bm]); }).catch(() => { busy[i] = false; });
+    });
+  }
+  applyPose(dt);
+  if (running && (now | 0) % 6 === 0) $('hud').textContent = `face ${track.haveFace ? 'yes' : 'no'} · shoulders ${track.haveShoulders ? 'yes' : 'no'} · ${Math.round(track.ms)} ms\nyaw ${track.yawDeg.toFixed(0)}° pitch ${track.pitchDeg.toFixed(0)}° roll ${track.rollDeg.toFixed(0)}°`;
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(frame);
+window.alien = { rig, track, view, model, center };   // for tests
+
+// --- controls ----------------------------------------------------------------------------------------------
+$('start').onclick = start; $('center').onclick = center;
+$('mirror').onchange = () => { view.mirror = $('mirror').checked; document.body.classList.toggle('mirror', view.mirror); };
+$('turnGain').oninput = () => { view.turn = +$('turnGain').value; $('turnGainV').textContent = view.turn.toFixed(1) + '×'; };
+$('moveGain').oninput = () => { view.move = +$('moveGain').value; $('moveGainV').textContent = view.move.toFixed(1) + '×'; };
+$('neckShare').oninput = () => { view.neck = +$('neckShare').value; $('neckShareV').textContent = Math.round(view.neck * 100) + '%'; };
+$('phoneCam').onclick = () => { const u = new URL(location.href); u.searchParams.set('cam', ''); location.href = u.href; };
+document.addEventListener('visibilitychange', () => { if (document.hidden && running && !CAM) stop(); });
+if (CAM) { $('start').textContent = 'Connect phone camera'; start(); }
+</script>
+</body></html>
