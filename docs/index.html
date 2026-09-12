@@ -27,6 +27,8 @@ label{display:flex;align-items:center;gap:6px;font-size:12px;color:#b9c6cc}input
   <div class="row"><span id="status">Start the camera, look at it, press Center.</span></div><div id="error"></div>
 </div>
 <script type="module">
+import {fpsMeter} from "./fps-meter.mjs?v=7-fps";
+const fpsPanel=document.createElement("div");document.body.append(fpsPanel);const markFPS=fpsMeter(fpsPanel,["FACE","SHOULDERS","RENDER"]);Object.assign(fpsPanel.style,{position:"fixed",right:"20px",top:"20px",zIndex:"10"});
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { phoneCamera } from './camlink.mjs?v=7';
@@ -71,7 +73,7 @@ const view = { mirror: true, turn: 1.2, move: 1, neck: .35, lock: false };
 const track = { faceQ: new THREE.Quaternion(), faceT: new THREE.Vector3(), neutralQ: null, neutralT: new THREE.Vector3(), haveFace: false, gaze: [0, 0], neutralGaze: [0, 0],
   shoulder: { roll: 0, yaw: 0 }, neutralS: null, haveShoulders: false, ms: 0, seen: 0, yawDeg: 0, pitchDeg: 0, rollDeg: 0 };
 const M = new THREE.Matrix4(), rawQ = new THREE.Quaternion(), rawT = new THREE.Vector3(), relQ = new THREE.Quaternion(), smoothQ = new THREE.Quaternion(), tmpQ = new THREE.Quaternion(), smoothT = new THREE.Vector3();
-function onResult(r) {
+function onResult(r) {markFPS(r.task==='face'?'FACE':'SHOULDERS');
   if (r.task === 'face') { track.ms = r.ms; track.seen = performance.now(); overlay.face = r.face?.pts || null; overlay.matrix = r.face?.matrix || null; }
   if (r.task === 'pose') overlay.pose = r.pose?.all || null;
   if (r.task === 'face') if (r.face) {
@@ -184,7 +186,7 @@ function frame(now) {
 head: yaw ${track.yawDeg.toFixed(0)}° pitch ${track.pitchDeg.toFixed(0)}° roll ${track.rollDeg.toFixed(0)}°
 arms ${arms.parts.filter(m => m.visible).length / 2}/2 · shoulders: roll ${((track.shoulder.roll - (track.neutralS?.roll || 0)) * 57.3).toFixed(0)}° turn ${((track.shoulder.yaw - (track.neutralS?.yaw || 0)) * 57.3).toFixed(0)}° · body ${view.lock ? 'LOCKED' : 'follows shoulders'}
 yellow = pose (shoulders, arms) · green = face mesh · red/green/blue = head axes`;
-  renderer.render(scene, camera);
+  renderer.render(scene, camera);markFPS('RENDER');
 }
 requestAnimationFrame(frame);
 window.alien = { rig, track, view, model, center, arms };   // for tests
