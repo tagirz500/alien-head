@@ -20,16 +20,16 @@ label{display:flex;align-items:center;gap:6px;font-size:12px;color:#b9c6cc}input
 <div id="hud">alien head · loading model…</div>
 <div id="panel">
   <div class="row"><button class="primary" id="start">Start camera</button><button id="phoneCam" title="This PC shows a code and a QR; the phone streams its camera here">Phone as camera</button><button id="center">Center</button>
-    <label><input id="mirror" type="checkbox" checked>Mirror</label><label><input id="lockBody" type="checkbox" checked>Lock body</label></div>
+    <label><input id="mirror" type="checkbox" checked>Mirror</label><label><input id="lockBody" type="checkbox">Lock body</label></div>
   <div class="row"><label>Turn gain <input id="turnGain" type="range" min="0.5" max="2.5" step="0.1" value="1.2"><output id="turnGainV">1.2×</output></label>
-    <label>Move gain <input id="moveGain" type="range" min="0" max="2" step="0.1" value="0"><output id="moveGainV">0.0×</output></label>
+    <label>Move gain <input id="moveGain" type="range" min="0" max="2" step="0.1" value="1"><output id="moveGainV">1.0×</output></label>
     <label title="How much of the head turn the neck does (the rest is the head joint alone)">Neck share <input id="neckShare" type="range" min="0" max="0.8" step="0.05" value="0.35"><output id="neckShareV">35%</output></label></div>
   <div class="row"><span id="status">Start the camera, look at it, press Center.</span></div><div id="error"></div>
 </div>
 <script type="module">
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { phoneCamera } from './camlink.mjs?v=4';
+import { phoneCamera } from './camlink.mjs?v=5';
 const $ = id => document.getElementById(id), Q = new URLSearchParams(location.search), CAM = Q.has('cam');
 const status = t => $('status').textContent = t;
 
@@ -46,8 +46,6 @@ function resize() { renderer.setSize(innerWidth, innerHeight); camera.aspect = i
 const rig = { root: null, neck: null, head: null, eyes: [] }, rest = new Map(), model = new THREE.Group(); scene.add(model);
 const _q = new THREE.Quaternion(), _p = new THREE.Quaternion(), _e = new THREE.Euler(), _v = new THREE.Vector3();
 let bustHeight = 2, bust = null;
-// lips: two parts (upper / lower) sunk into the face at the mouth; the lower one drops with jawOpen, both widen with a smile and narrow with a pucker
-const lips = { group: new THREE.Group(), upper: null, lower: null, size: 1, blend: {} };
 // arms: shoulder -> elbow -> wrist capsules from the pose tracker's metric joints, hung on the bust's shoulders (no hands)
 const arms = { group: new THREE.Group(), joints: null, smooth: [], parts: [], anchor: [new THREE.Vector3(), new THREE.Vector3()], scale: 1 };
 new GLTFLoader().load('alien.glb', g => {
@@ -61,29 +59,15 @@ new GLTFLoader().load('alien.glb', g => {
   // shoulders of the bust: near the lower corners of the box, a little inside; arm scale: bust width = a 0.42 m human shoulder span
   arms.anchor[0].set(-s.x * 0.5, bust.box.min.y + s.y * 0.12, 0); arms.anchor[1].set(s.x * 0.5, bust.box.min.y + s.y * 0.12, 0); arms.scale = s.x / 0.42;
   const skin = new THREE.MeshStandardMaterial({ color: 0x8a9a6a, roughness: 0.7 });
-  for (let i = 0; i < 4; i++) { const m = new THREE.Mesh(new THREE.CapsuleGeometry(s.x * 0.075, 1, 4, 12), skin); m.visible = false; arms.group.add(m); arms.parts.push(m); }
+  for (let i = 0; i < 4; i++) { const m = new THREE.Mesh(new THREE.CapsuleGeometry(s.x * 0.09, 1, 4, 12), skin); m.visible = false; arms.group.add(m); arms.parts.push(m); }
   scene.add(arms.group);
-  // lips: loaded separately, parented to the head bone so they turn with it
-  new GLTFLoader().load('lips.glb', l => {
-    l.scene.traverse(o => { if (o.isMesh) { o.material.side = THREE.DoubleSide; o.frustumCulled = false; if (o.name === 'LipUpper') lips.upper = o; if (o.name === 'LipLower') lips.lower = o; } });
-    const lb = new THREE.Box3().setFromObject(l.scene), ls = lb.getSize(new THREE.Vector3());
-    const k = s.x * 0.42 / ls.x; l.scene.scale.setScalar(k); lips.size = ls.y * k;   // mouth ~40% of the bust width
-    lips.group.add(l.scene);
-    // mouth position in the HEAD bone's frame: below the eyes on the front of the face (bust space -> head local)
-    rig.head.updateWorldMatrix(true, false);
-    const mouthWorld = new THREE.Vector3(0, bust.box.min.y + s.y * 0.47, bust.box.max.z - ls.z * k * 0.45);   // plate sunk into the face, the lips themselves stand proud
-    rig.head.worldToLocal(mouthWorld); lips.group.position.copy(mouthWorld);
-    const hq = rig.head.getWorldQuaternion(new THREE.Quaternion()).invert(); lips.group.quaternion.copy(hq);   // face the world +Z regardless of the bone's own axes
-    const hs = new THREE.Vector3(); rig.head.matrixWorld.decompose(new THREE.Vector3(), new THREE.Quaternion(), hs); lips.group.scale.set(1 / hs.x, 1 / hs.y, 1 / hs.z);   // the bones carry the FBX centimetre scale (0.01): undo it
-    rig.head.add(lips.group); window.alien.lips = lips;
-  }, undefined, e => $('error').textContent = 'lips failed: ' + e.message);
   $('hud').textContent = 'alien head · model ready · ' + (rig.head ? 'head bone found' : 'NO head bone') + (rig.root ? ' · shoulders on root' : '');
 }, undefined, e => $('error').textContent = 'model failed: ' + e.message);
 function setWorldRot(bone, qWorld) { bone.parent.updateWorldMatrix(true, false); bone.parent.getWorldQuaternion(_p); bone.quaternion.copy(_p.invert().multiply(qWorld)); }
 const scaled = (q, k, out) => { _e.setFromQuaternion(q, 'YXZ'); _e.x *= k; _e.y *= k; _e.z *= k; return out.setFromEuler(_e); };
 
 // --- tracking -> pose ---------------------------------------------------------------------------------------
-const view = { mirror: true, turn: 1.2, move: 0, neck: .35, lock: true };
+const view = { mirror: true, turn: 1.2, move: 1, neck: .35, lock: false };
 const track = { faceQ: new THREE.Quaternion(), faceT: new THREE.Vector3(), neutralQ: null, neutralT: new THREE.Vector3(), haveFace: false, gaze: [0, 0], neutralGaze: [0, 0],
   shoulder: { roll: 0, yaw: 0 }, neutralS: null, haveShoulders: false, ms: 0, seen: 0, yawDeg: 0, pitchDeg: 0, rollDeg: 0 };
 const M = new THREE.Matrix4(), rawQ = new THREE.Quaternion(), rawT = new THREE.Vector3(), relQ = new THREE.Quaternion(), smoothQ = new THREE.Quaternion(), tmpQ = new THREE.Quaternion(), smoothT = new THREE.Vector3();
@@ -94,7 +78,7 @@ function onResult(r) {
     M.fromArray(r.face.matrix); M.decompose(rawT, rawQ, _v);
     if (!track.neutralQ) center();
     track.faceQ.copy(rawQ); track.faceT.copy(rawT); track.haveFace = true;
-    const b = r.face.blend || {}; lips.blend = b;
+    const b = r.face.blend || {};
     track.gaze = [((b.eyeLookInLeft || 0) - (b.eyeLookOutLeft || 0) + (b.eyeLookOutRight || 0) - (b.eyeLookInRight || 0)) / 2,   // > 0: the person looks to their right
                   ((b.eyeLookUpLeft || 0) + (b.eyeLookUpRight || 0) - (b.eyeLookDownLeft || 0) - (b.eyeLookDownRight || 0)) / 2];
   } else track.haveFace = false;
@@ -103,7 +87,7 @@ function onResult(r) {
     if (l[2] > .5 && rr[2] > .5) {
       const roll = Math.atan2(rr[1] - l[1], rr[0] - l[0]) - Math.PI;   // shoulder line in the picture (y down); level = 0
       const yaw = Math.atan2(wr[2] - wl[2], wl[0] - wr[0]);           // one shoulder nearer the camera than the other
-      track.shoulder = { roll: Math.atan2(Math.sin(roll), Math.cos(roll)), yaw }; if (!track.neutralS) track.neutralS = { ...track.shoulder }; track.haveShoulders = true;
+      track.shoulder = { roll: Math.atan2(Math.sin(roll), Math.cos(roll)), yaw, mid: [(l[0] + rr[0]) / 2, (l[1] + rr[1]) / 2], width: Math.hypot(rr[0] - l[0], rr[1] - l[1]) }; if (!track.neutralS) track.neutralS = { ...track.shoulder }; track.haveShoulders = true;
     }
   }
 }
@@ -116,8 +100,11 @@ function applyPose(dt) {
     _e.setFromQuaternion(relQ, 'YXZ'); if (view.mirror) { _e.y = -_e.y; _e.z = -_e.z; } _e.x *= view.turn; _e.y *= view.turn; _e.z *= view.turn;
     track.yawDeg = _e.y * 180 / Math.PI; track.pitchDeg = _e.x * 180 / Math.PI; track.rollDeg = _e.z * 180 / Math.PI;
     smoothQ.slerp(tmpQ.setFromEuler(_e), k);
-    _v.copy(track.faceT).sub(track.neutralT).multiplyScalar(view.move * 0.012 * bustHeight); if (view.mirror) _v.x = -_v.x;   // matrix translation is in cm
-    smoothT.lerp(_v, k);
+    if (track.haveShoulders && track.neutralS) {   // the bust travels with your shoulders: sideways/up from the picture, closer/farther from the shoulder width
+      const S = track.shoulder, N = track.neutralS, u = bustHeight * 0.8 / N.width;   // picture units -> bust units (shoulder span = 0.8 bust heights)
+      _v.set((view.mirror ? -1 : 1) * -(S.mid[0] - N.mid[0]) * u, -(S.mid[1] - N.mid[1]) * u, (S.width / N.width - 1) * bustHeight * 1.5).multiplyScalar(view.move);
+      smoothT.lerp(_v, k);
+    }
   } else { smoothQ.slerp(_q.identity(), k * .5); smoothT.lerp(_v.set(0, 0, 0), k * .5); }
   // shoulders: roll and a little yaw on the root (the whole bust), relative to the centred pose
   let sr = 0, sy = 0;
@@ -131,28 +118,21 @@ function applyPose(dt) {
   for (const eye of rig.eyes) { _e.set(gy, gx, 0, 'YXZ'); setWorldRot(eye, _q.copy(smoothQ).multiply(tmpQ.setFromEuler(_e)).multiply(rest.get(eye))); }
 }
 
-function applyLips() {
-  if (!lips.lower) return; const b = lips.blend, open = b.jawOpen || 0, smile = ((b.mouthSmileLeft || 0) + (b.mouthSmileRight || 0)) / 2, pucker = Math.max(b.mouthPucker || 0, b.mouthFunnel || 0);
-  const wide = 1 + smile * 0.3 - pucker * 0.35, fwd = pucker * lips.size * 0.5;
-  lips.upper.scale.set(wide, 1, 1); lips.lower.scale.set(wide, 1 + open * 0.3, 1);
-  lips.upper.position.set(0, 0, fwd); lips.lower.position.set(0, -open * lips.size * 0.8, fwd);
-  lips.lower.rotation.x = open * 0.35;
-}
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
 function placeCapsule(mesh, a, b) { _a.subVectors(b, a); const L = _a.length(); mesh.position.copy(a).addScaledVector(_a, 0.5); mesh.scale.set(1, Math.max(0.01, L), 1); mesh.quaternion.setFromUnitVectors(_up, _a.normalize()); }
 function applyArms(dt) {
-  if (!bust) return; const J = arms.joints, k = 1 - Math.exp(-dt / .08);
-  if (!J || performance.now() - track.seen > 800) { arms.parts.forEach(m => m.visible = false); return; }
-  // pose world joints are metres, y down, z toward the camera negative; the bust is y up, z toward the viewer
-  const sx = view.mirror ? -1 : 1;
-  for (let side = 0; side < 2; side++) {   // side 0 = the person's left shoulder (index 11), 1 = right (12)
-    const sh = J[side], el = J[side + 2], wr = J[side + 4]; if (!sh || !el || !wr || el[3] < .4) { arms.parts[side * 2].visible = arms.parts[side * 2 + 1].visible = false; continue; }
-    const anchor = arms.anchor[view.mirror ? side : 1 - side];   // mirror: your left arm shows on the screen's left
-    const toBust = (q, out) => out.set(sx * -(q[0] - sh[0]), -(q[1] - sh[1]), -(q[2] - sh[2])).multiplyScalar(arms.scale).add(anchor);
-    const e = arms.smooth[side * 2] ||= new THREE.Vector3().copy(toBust(el, _b)), w = arms.smooth[side * 2 + 1] ||= new THREE.Vector3().copy(toBust(wr, _b));
-    e.lerp(toBust(el, _b), k); w.lerp(toBust(wr, _b), k);
+  if (!bust) return; const P = overlay.pose, J = arms.joints, k = 1 - Math.exp(-dt / .05);
+  if (!P || !J || performance.now() - track.seen > 800 || P[11][2] < .5 || P[12][2] < .5) { arms.parts.forEach(m => m.visible = false); return; }
+  // the yellow line on the camera, copied: picture offsets from each shoulder scaled by the shoulder span, depth from the metric joints
+  const span = Math.hypot(P[12][0] - P[11][0], P[12][1] - P[11][1]) || 1e-3, u = (arms.anchor[1].x - arms.anchor[0].x) / span, sx = view.mirror ? -1 : 1;
+  for (let side = 0; side < 2; side++) {   // 0 = the person's left (pose 11), 1 = right (12)
+    const sh = 11 + side, el = 13 + side, wr = 15 + side, anchor = arms.anchor[view.mirror ? side : 1 - side];
+    const to = (i, out) => out.set(sx * -(P[i][0] - P[sh][0]) * u, -(P[i][1] - P[sh][1]) * u, 0).add(anchor);   // flat: the line on the camera, nothing else
+    if (P[el][2] < .4) { arms.parts[side * 2].visible = arms.parts[side * 2 + 1].visible = false; continue; }
+    const e = arms.smooth[side * 2] ||= to(el, new THREE.Vector3()), w = arms.smooth[side * 2 + 1] ||= to(wr, new THREE.Vector3());
+    e.lerp(to(el, _b), k); w.lerp(to(wr, _b), k);
     placeCapsule(arms.parts[side * 2], anchor, e); placeCapsule(arms.parts[side * 2 + 1], e, w);
-    arms.parts[side * 2].visible = true; arms.parts[side * 2 + 1].visible = wr[3] > .4;
+    arms.parts[side * 2].visible = true; arms.parts[side * 2 + 1].visible = P[wr][2] > .4;
   }
 }
 
@@ -182,7 +162,7 @@ async function start() {
   try {
     stream = CAM ? (stream?.active ? stream : await phoneCamera(status, takeCam)) : await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } } });
     takeCam(stream); status('Loading face + pose tracking…');
-    workers = ['face', 'pose'].map(task => new Worker(new URL('./tracker.mjs?v=4&task=' + task, import.meta.url), { type: 'module' }));
+    workers = ['face', 'pose'].map(task => new Worker(new URL('./tracker.mjs?v=5&task=' + task, import.meta.url), { type: 'module' }));
     await Promise.all(workers.map(w => new Promise((res, rej) => { const t = setTimeout(() => rej(Error('tracker loading timed out')), 60000); w.onmessage = ({ data }) => { if (data.type === 'ready') { clearTimeout(t); res(); } else if (data.type === 'error') { clearTimeout(t); rej(Error(data.message)); } }; w.onerror = e => { clearTimeout(t); rej(Error(e.message)); }; w.postMessage({ type: 'init' }); })));
     workers.forEach((w, i) => w.onmessage = ({ data }) => { busy[i] = false; if (data.type === 'error') { $('error').textContent = data.task + ': ' + data.message; return; } if (data.type === 'result') onResult(data); });
     running = true; $('start').textContent = 'Stop camera'; status('Look at the camera and press Center');
@@ -200,11 +180,10 @@ function frame(now) {
       createImageBitmap(v, { resizeWidth: 480, resizeHeight: Math.round(480 * v.videoHeight / v.videoWidth), resizeQuality: 'low' }).then(bm => { if (workers[i] !== w) { bm.close(); return; } w.postMessage({ type: 'frame', bitmap: bm, time: t + i }, [bm]); }).catch(() => { busy[i] = false; });
     });
   }
-  applyPose(dt); applyLips(); applyArms(dt); drawOverlay();
+  applyPose(dt); applyArms(dt); drawOverlay();
   if (running && (now | 0) % 6 === 0) $('hud').textContent = `face ${track.haveFace ? 'yes' : 'no'} · shoulders ${track.haveShoulders ? 'yes' : 'no'} · ${Math.round(track.ms)} ms
 head: yaw ${track.yawDeg.toFixed(0)}° pitch ${track.pitchDeg.toFixed(0)}° roll ${track.rollDeg.toFixed(0)}°
 shoulders: roll ${((track.shoulder.roll - (track.neutralS?.roll || 0)) * 57.3).toFixed(0)}° turn ${((track.shoulder.yaw - (track.neutralS?.yaw || 0)) * 57.3).toFixed(0)}° · body ${view.lock ? 'LOCKED' : 'follows shoulders'}
-mouth: open ${((lips.blend.jawOpen || 0) * 100).toFixed(0)}% smile ${(((lips.blend.mouthSmileLeft || 0) + (lips.blend.mouthSmileRight || 0)) * 50).toFixed(0)}% pucker ${((lips.blend.mouthPucker || 0) * 100).toFixed(0)}%
 yellow = pose (shoulders, arms) · green = face mesh · red/green/blue = head axes`;
   renderer.render(scene, camera);
 }

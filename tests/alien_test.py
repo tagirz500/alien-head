@@ -8,7 +8,7 @@ def args(clip): return ["--enable-gpu", "--ignore-gpu-blocklist", "--autoplay-po
 READ = """() => { const a = window.alien, t = a.track, q = b => b ? b.quaternion.toArray().map(v => +v.toFixed(3)) : null;
   return { face: t.haveFace, shoulders: t.haveShoulders, ms: Math.round(t.ms), yaw: +t.yawDeg.toFixed(1), pitch: +t.pitchDeg.toFixed(1), roll: +t.rollDeg.toFixed(1),
            head: q(a.rig.head), neck: q(a.rig.neck), root: q(a.rig.root), eyes: a.rig.eyes.length, gaze: t.gaze.map(v => +v.toFixed(2)), shoulder: {roll: +(t.shoulder.roll*57.3).toFixed(1), yaw: +(t.shoulder.yaw*57.3).toFixed(1)},
-           armsShown: a.arms.parts.filter(m => m.visible).length, lips: !!a.lips?.lower, mouth: a.lips ? {open: +(a.lips.blend.jawOpen||0).toFixed(2), smile: +(a.lips.blend.mouthSmileLeft||0).toFixed(2)} : null, hud: document.getElementById('hud').textContent, error: document.getElementById('error').textContent, status: document.getElementById('status').textContent }; }"""
+           armsShown: a.arms.parts.filter(m => m.visible).length, bodyPos: a.model.position.toArray().map(x=>+x.toFixed(2)), hud: document.getElementById('hud').textContent, error: document.getElementById('error').textContent, status: document.getElementById('status').textContent }; }"""
 async def run_clip(p, clip, tag):
     b = await p.chromium.launch(channel="msedge", headless=True, args=args(clip))
     pg = await b.new_page(viewport={"width": 1000, "height": 700}); errs = []
@@ -26,7 +26,7 @@ async def run_clip(p, clip, tag):
     await pg.wait_for_timeout(600)
     turned = await pg.evaluate(READ)
     await pg.screenshot(path=os.path.join(HERE, f"alien_{tag}.png"))
-    print(f"== {tag}: arms {neutral['armsShown']} lips {neutral['lips']} mouth {neutral['mouth']} | neutral yaw/pitch/roll {neutral['yaw']}/{neutral['pitch']}/{neutral['roll']} face {neutral['face']} shoulders {neutral['shoulders']} ms {neutral['ms']} eyes {neutral['eyes']} shoulder {neutral['shoulder']} gaze {neutral['gaze']}")
+    print(f"== {tag}: arms {neutral['armsShown']} body {neutral['bodyPos']} | neutral yaw/pitch/roll {neutral['yaw']}/{neutral['pitch']}/{neutral['roll']} face {neutral['face']} shoulders {neutral['shoulders']} ms {neutral['ms']} eyes {neutral['eyes']} shoulder {neutral['shoulder']} gaze {neutral['gaze']}")
     print(f"   after a 20° head turn: yaw {turned['yaw']} | head bone moved: {turned['head'] != neutral['head']} | neck moved: {turned['neck'] != neutral['neck']} | hud: {turned['hud']!r}")
     print("   errors:", errs[:5] or "none")
     await b.close(); return neutral, turned
