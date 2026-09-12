@@ -29,7 +29,7 @@ label{display:flex;align-items:center;gap:6px;font-size:12px;color:#b9c6cc}input
 <script type="module">
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { phoneCamera } from './camlink.mjs?v=5';
+import { phoneCamera } from './camlink.mjs?v=6';
 const $ = id => document.getElementById(id), Q = new URLSearchParams(location.search), CAM = Q.has('cam');
 const status = t => $('status').textContent = t;
 
@@ -82,7 +82,7 @@ function onResult(r) {
     track.gaze = [((b.eyeLookInLeft || 0) - (b.eyeLookOutLeft || 0) + (b.eyeLookOutRight || 0) - (b.eyeLookInRight || 0)) / 2,   // > 0: the person looks to their right
                   ((b.eyeLookUpLeft || 0) + (b.eyeLookUpRight || 0) - (b.eyeLookDownLeft || 0) - (b.eyeLookDownRight || 0)) / 2];
   } else track.haveFace = false;
-  if (r.task === 'pose') { arms.joints = r.pose?.arms || null; } if (r.task === 'pose') if (r.pose) {
+  if (r.task === 'pose') { arms.joints = r.pose?.arms || null; arms.seen = performance.now(); } if (r.task === 'pose') if (r.pose) {
     const [l, rr] = r.pose.img, [wl, wr] = r.pose.world;
     if (l[2] > .5 && rr[2] > .5) {
       const roll = Math.atan2(rr[1] - l[1], rr[0] - l[0]) - Math.PI;   // shoulder line in the picture (y down); level = 0
@@ -122,17 +122,16 @@ const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _up = new THREE.Vector
 function placeCapsule(mesh, a, b) { _a.subVectors(b, a); const L = _a.length(); mesh.position.copy(a).addScaledVector(_a, 0.5); mesh.scale.set(1, Math.max(0.01, L), 1); mesh.quaternion.setFromUnitVectors(_up, _a.normalize()); }
 function applyArms(dt) {
   if (!bust) return; const P = overlay.pose, J = arms.joints, k = 1 - Math.exp(-dt / .05);
-  if (!P || !J || performance.now() - track.seen > 800 || P[11][2] < .5 || P[12][2] < .5) { arms.parts.forEach(m => m.visible = false); return; }
+  if (!P || !J || performance.now() - (arms.seen || 0) > 1500 || Math.max(P[11][2], P[12][2]) < .3) { arms.parts.forEach(m => m.visible = false); return; }   // pose keeps estimating joints outside the picture: draw them anyway
   // the yellow line on the camera, copied: picture offsets from each shoulder scaled by the shoulder span, depth from the metric joints
   const span = Math.hypot(P[12][0] - P[11][0], P[12][1] - P[11][1]) || 1e-3, u = (arms.anchor[1].x - arms.anchor[0].x) / span, sx = view.mirror ? -1 : 1;
   for (let side = 0; side < 2; side++) {   // 0 = the person's left (pose 11), 1 = right (12)
     const sh = 11 + side, el = 13 + side, wr = 15 + side, anchor = arms.anchor[view.mirror ? side : 1 - side];
     const to = (i, out) => out.set(sx * -(P[i][0] - P[sh][0]) * u, -(P[i][1] - P[sh][1]) * u, 0).add(anchor);   // flat: the line on the camera, nothing else
-    if (P[el][2] < .4) { arms.parts[side * 2].visible = arms.parts[side * 2 + 1].visible = false; continue; }
     const e = arms.smooth[side * 2] ||= to(el, new THREE.Vector3()), w = arms.smooth[side * 2 + 1] ||= to(wr, new THREE.Vector3());
     e.lerp(to(el, _b), k); w.lerp(to(wr, _b), k);
     placeCapsule(arms.parts[side * 2], anchor, e); placeCapsule(arms.parts[side * 2 + 1], e, w);
-    arms.parts[side * 2].visible = true; arms.parts[side * 2 + 1].visible = P[wr][2] > .4;
+    arms.parts[side * 2].visible = true; arms.parts[side * 2 + 1].visible = true;
   }
 }
 
@@ -162,7 +161,7 @@ async function start() {
   try {
     stream = CAM ? (stream?.active ? stream : await phoneCamera(status, takeCam)) : await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } } });
     takeCam(stream); status('Loading face + pose tracking…');
-    workers = ['face', 'pose'].map(task => new Worker(new URL('./tracker.mjs?v=5&task=' + task, import.meta.url), { type: 'module' }));
+    workers = ['face', 'pose'].map(task => new Worker(new URL('./tracker.mjs?v=6&task=' + task, import.meta.url), { type: 'module' }));
     await Promise.all(workers.map(w => new Promise((res, rej) => { const t = setTimeout(() => rej(Error('tracker loading timed out')), 60000); w.onmessage = ({ data }) => { if (data.type === 'ready') { clearTimeout(t); res(); } else if (data.type === 'error') { clearTimeout(t); rej(Error(data.message)); } }; w.onerror = e => { clearTimeout(t); rej(Error(e.message)); }; w.postMessage({ type: 'init' }); })));
     workers.forEach((w, i) => w.onmessage = ({ data }) => { busy[i] = false; if (data.type === 'error') { $('error').textContent = data.task + ': ' + data.message; return; } if (data.type === 'result') onResult(data); });
     running = true; $('start').textContent = 'Stop camera'; status('Look at the camera and press Center');
@@ -183,7 +182,7 @@ function frame(now) {
   applyPose(dt); applyArms(dt); drawOverlay();
   if (running && (now | 0) % 6 === 0) $('hud').textContent = `face ${track.haveFace ? 'yes' : 'no'} · shoulders ${track.haveShoulders ? 'yes' : 'no'} · ${Math.round(track.ms)} ms
 head: yaw ${track.yawDeg.toFixed(0)}° pitch ${track.pitchDeg.toFixed(0)}° roll ${track.rollDeg.toFixed(0)}°
-shoulders: roll ${((track.shoulder.roll - (track.neutralS?.roll || 0)) * 57.3).toFixed(0)}° turn ${((track.shoulder.yaw - (track.neutralS?.yaw || 0)) * 57.3).toFixed(0)}° · body ${view.lock ? 'LOCKED' : 'follows shoulders'}
+arms ${arms.parts.filter(m => m.visible).length / 2}/2 · shoulders: roll ${((track.shoulder.roll - (track.neutralS?.roll || 0)) * 57.3).toFixed(0)}° turn ${((track.shoulder.yaw - (track.neutralS?.yaw || 0)) * 57.3).toFixed(0)}° · body ${view.lock ? 'LOCKED' : 'follows shoulders'}
 yellow = pose (shoulders, arms) · green = face mesh · red/green/blue = head axes`;
   renderer.render(scene, camera);
 }
