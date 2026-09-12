@@ -20,13 +20,13 @@ self.onmessage = async ({ data }) => {
         if (TASK === 'face') {
           const f = tracker.detectForVideo(data.bitmap, data.time);
           if (f.facialTransformationMatrixes?.length) {
-            const b = {}; for (const c of f.faceBlendshapes?.[0]?.categories || []) if (/^eyeLook|^jawOpen|^eyeBlink|^mouthSmile/.test(c.categoryName)) b[c.categoryName] = c.score;
+            const b = {}; for (const c of f.faceBlendshapes?.[0]?.categories || []) if (/^eyeLook|^jawOpen|^eyeBlink|^mouth/.test(c.categoryName)) b[c.categoryName] = c.score;
             const L = f.faceLandmarks[0], pts = new Float32Array(L.length * 2); L.forEach((q, i) => { pts[2 * i] = q.x; pts[2 * i + 1] = q.y; });
             out.face = { matrix: Array.from(f.facialTransformationMatrixes[0].data), blend: b, pts };
           } else out.face = null;
         } else {
           const p = tracker.detectForVideo(data.bitmap, data.time);
-          out.pose = p.landmarks?.length ? { img: [p.landmarks[0][11], p.landmarks[0][12]].map(q => [q.x, q.y, q.visibility]), world: [p.worldLandmarks[0][11], p.worldLandmarks[0][12]].map(q => [q.x, q.y, q.z]), all: p.landmarks[0].slice(0, 17).map(q => [q.x, q.y, q.visibility]) } : null;
+          out.pose = p.landmarks?.length ? { img: [p.landmarks[0][11], p.landmarks[0][12]].map(q => [q.x, q.y, q.visibility]), world: [p.worldLandmarks[0][11], p.worldLandmarks[0][12]].map(q => [q.x, q.y, q.z]), all: p.landmarks[0].slice(0, 17).map(q => [q.x, q.y, q.visibility]), arms: p.worldLandmarks[0].slice(11, 17).map(q => [q.x, q.y, q.z, p.landmarks[0][p.worldLandmarks[0].indexOf(q)]?.visibility ?? 1]) } : null;
         }
         out.ms = performance.now() - t0; self.postMessage(out);
       } finally { data.bitmap.close(); }
